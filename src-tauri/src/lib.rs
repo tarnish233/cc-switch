@@ -44,7 +44,7 @@ pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_l
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
-pub use database::{Database, Profile};
+pub use database::{Database, ModelRoute, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
@@ -1403,6 +1403,13 @@ pub fn run() {
             commands::remove_from_failover_queue,
             commands::get_auto_failover_enabled,
             commands::set_auto_failover_enabled,
+            // Model aggregation routing
+            commands::list_model_routes,
+            commands::upsert_model_route,
+            commands::delete_model_route,
+            commands::clear_model_routes,
+            commands::get_aggregation_enabled,
+            commands::set_aggregation_enabled,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_summary_by_app,

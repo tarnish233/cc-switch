@@ -418,6 +418,10 @@
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
         }
+      },
+      "aggregation": {
+        "title": "モデル集約",
+        "description": "異なるプロバイダーのモデルを1つのプロキシエンドポイントに集約し、モデル名でルーティング"
       }
     },
     "language": "言語",
@@ -2655,7 +2659,27 @@
       "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"
     },
     "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
-    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
+    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}",
+    "aggregation": {
+      "enableTitle": "モデル集約",
+      "enableDescription": "有効にすると、プロキシはリクエストのモデル名に基づいて対応するプロバイダーへルーティングし、異なるプロバイダーのモデルを1つのエンドポイントに集約します。",
+      "info": "マッチング：完全一致（例: gpt-4o）が優先、次に最長プレフィックスのワイルドカード（例: gpt-*）、最後に * のフォールバック。ルートに一致しない場合は現在のプロバイダーにフォールバックします。",
+      "modelPatternPlaceholder": "モデル名 / ワイルドカード（例: gpt-*）",
+      "selectProvider": "プロバイダーを選択",
+      "noProviders": "このアプリにはプロバイダーがありません",
+      "upstreamModelPlaceholder": "アップストリームモデル名（任意）",
+      "empty": "ルートがありません。「モデル名 → プロバイダー」マッピングを追加して集約を有効にします。",
+      "upstreamLabel": "アップストリームモデル",
+      "proxyRequired": "モデル集約を設定するには、先にプロキシサービスを起動してください",
+      "enabled": "モデル集約を有効にしました",
+      "disabled": "モデル集約を無効にしました",
+      "toggleFailed": "モデル集約の切り替えに失敗しました",
+      "addSuccess": "ルートを追加しました",
+      "addFailed": "ルートの追加に失敗しました",
+      "updateFailed": "ルートの更新に失敗しました",
+      "deleteSuccess": "ルートを削除しました",
+      "deleteFailed": "ルートの削除に失敗しました"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} は接続可能 ({{responseTimeMs}}ms)",

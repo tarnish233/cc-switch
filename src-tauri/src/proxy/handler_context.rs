@@ -53,6 +53,12 @@ pub struct RequestContext {
     /// usage 归因的兜底顺序：上游响应回显 → outbound_model → request_model。
     /// 不能直接用 request_model 兜底：接管场景下它是映射前的客户端别名。
     pub outbound_model: Option<String>,
+    /// 模型聚合路由命中时配置的上游模型改写（转发前用它覆盖请求模型名）。
+    ///
+    /// 仅在开启「模型聚合」且命中带 `upstream_model` 的路由时为 `Some`。
+    routed_upstream_model: Option<String>,
+    /// 本次请求是否由模型聚合路由命中（用于抑制"当前供应商"的持久切换）。
+    aggregation_routed: bool,
     /// 日志标签（如 "Claude"、"Codex"、"Gemini"）
     pub tag: &'static str,
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
@@ -131,9 +137,12 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
+        //
+        // 模型聚合：优先按请求模型名路由到对应供应商；未开启聚合或未命中路由时，
+        // select_providers_for_model 会自动回退到常规的当前供应商/故障转移选择。
+        let selection = state
             .provider_router
-            .select_providers(app_type_str)
+            .select_providers_for_model(app_type_str, &request_model)
             .await
             .map_err(|e| match e {
                 crate::error::AppError::AllProvidersCircuitOpen => {
@@ -142,6 +151,9 @@ impl RequestContext {
                 crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
+        let providers = selection.providers;
+        let routed_upstream_model = selection.upstream_model;
+        let aggregation_routed = selection.routed;
 
         let provider = providers
             .first()
@@ -165,6 +177,8 @@ impl RequestContext {
             current_provider_id,
             request_model,
             outbound_model: None,
+            routed_upstream_model,
+            aggregation_routed,
             tag,
             app_type_str,
             app_type,
@@ -242,6 +256,8 @@ impl RequestContext {
             self.copilot_optimizer_config.clone(),
             max_retries,
         )
+        .with_routed_upstream_model(self.routed_upstream_model.clone())
+        .with_aggregation_routed(self.aggregation_routed)
     }
 
     /// 获取 Provider 列表（用于故障转移）

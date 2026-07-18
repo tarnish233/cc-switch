@@ -418,6 +418,10 @@
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
         }
+      },
+      "aggregation": {
+        "title": "Model Aggregation",
+        "description": "Pool models from different providers behind one proxy endpoint, routed by model name"
       }
     },
     "language": "Language",
@@ -2655,7 +2659,27 @@
       "startFailed": "Failed to start routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
-    "stopWithRestoreFailed": "Stop failed: {{detail}}"
+    "stopWithRestoreFailed": "Stop failed: {{detail}}",
+    "aggregation": {
+      "enableTitle": "Model Aggregation",
+      "enableDescription": "When enabled, the proxy routes each request to the matching provider based on the requested model name, pooling models from different providers behind one endpoint.",
+      "info": "Matching: exact (e.g. gpt-4o) wins, then longest prefix wildcard (e.g. gpt-*), then * fallback. Requests with no matching route fall back to the current provider.",
+      "modelPatternPlaceholder": "Model name / wildcard (e.g. gpt-*)",
+      "selectProvider": "Select provider",
+      "noProviders": "No providers for this app",
+      "upstreamModelPlaceholder": "Upstream model (optional)",
+      "empty": "No routes yet. Add a model → provider mapping to enable aggregation.",
+      "upstreamLabel": "Upstream model",
+      "proxyRequired": "Start the proxy service before configuring model aggregation",
+      "enabled": "Model aggregation enabled",
+      "disabled": "Model aggregation disabled",
+      "toggleFailed": "Failed to toggle model aggregation",
+      "addSuccess": "Route added",
+      "addFailed": "Failed to add route",
+      "updateFailed": "Failed to update route",
+      "deleteSuccess": "Route deleted",
+      "deleteFailed": "Failed to delete route"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} is reachable ({{responseTimeMs}}ms)",

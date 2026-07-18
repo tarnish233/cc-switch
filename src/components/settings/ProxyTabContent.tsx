@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
+import {
+  Server,
+  Activity,
+  Zap,
+  Globe,
+  ShieldAlert,
+  Layers,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -13,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProxyPanel } from "@/components/proxy";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
+import { AggregationConfigPanel } from "@/components/proxy/AggregationConfigPanel";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -206,6 +214,64 @@ export function ProxyTabContent({
                           disabled={failoverDisabled}
                         />
                       </div>
+                    </TabsContent>
+                  );
+                })}
+              </Tabs>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Model Aggregation */}
+        <AccordionItem
+          value="aggregation"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <Layers className="h-5 w-5 text-indigo-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("settings.advanced.aggregation.title", {
+                    defaultValue: "模型聚合",
+                  })}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("settings.advanced.aggregation.description", {
+                    defaultValue:
+                      "把不同供应商的模型聚合到统一代理端点，按模型名路由",
+                  })}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            <div className="space-y-6">
+              {!isRunning && (
+                <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                  <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                    {t("proxy.aggregation.proxyRequired", {
+                      defaultValue: "需要先启动代理服务才能配置模型聚合",
+                    })}
+                  </p>
+                </div>
+              )}
+
+              <Tabs defaultValue="claude" className="w-full">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="claude">Claude</TabsTrigger>
+                  <TabsTrigger value="codex">Codex</TabsTrigger>
+                  <TabsTrigger value="grokbuild">Grok Build</TabsTrigger>
+                </TabsList>
+                {(["claude", "codex", "grokbuild"] as const).map((appType) => {
+                  const aggregationDisabled =
+                    !isRunning || !(takeoverStatus?.[appType] ?? false);
+                  return (
+                    <TabsContent key={appType} value={appType} className="mt-4">
+                      <AggregationConfigPanel
+                        appType={appType}
+                        disabled={aggregationDisabled}
+                      />
                     </TabsContent>
                   );
                 })}

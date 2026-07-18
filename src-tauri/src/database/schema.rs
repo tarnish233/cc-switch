@@ -402,6 +402,37 @@ impl Database {
             [],
         );
 
+        // 模型聚合路由表（把不同供应商的模型聚合到统一代理端点，按模型名路由）
+        Self::create_model_routes_table(conn)?;
+
+        Ok(())
+    }
+
+    /// 创建模型聚合路由表（幂等）
+    pub(crate) fn create_model_routes_table(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_routes (
+                id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                model_pattern TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                upstream_model TEXT,
+                sort_index INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER,
+                PRIMARY KEY (id, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_model_routes_lookup
+             ON model_routes(app_type, enabled, sort_index)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -505,6 +536,11 @@ impl Database {
                         log::info!("迁移数据库从 v14 到 v15（Skills/MCP 添加 Grok Build 支持）");
                         Self::migrate_v14_to_v15(conn)?;
                         Self::set_user_version(conn, 15)?;
+                    }
+                    15 => {
+                        log::info!("迁移数据库从 v15 到 v16（新增模型聚合路由表）");
+                        Self::migrate_v15_to_v16(conn)?;
+                        Self::set_user_version(conn, 16)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1507,6 +1543,12 @@ impl Database {
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }
+        Ok(())
+    }
+
+    /// v15 -> v16 迁移：新增模型聚合路由表 `model_routes`
+    fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
+        Self::create_model_routes_table(conn)?;
         Ok(())
     }
 
@@ -3018,6 +3060,32 @@ mod tests {
         )?;
         assert_eq!(mcp_values, (1, 0));
         assert_eq!(skill_values, (1, 0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v15_to_v16_creates_model_routes_table() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::set_user_version(&conn, 15)?;
+
+        // v15 库没有 model_routes 表
+        assert!(!Database::table_exists(&conn, "model_routes")?);
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "model_routes")?);
+
+        // 迁移后可正常写入/读取
+        conn.execute(
+            "INSERT INTO model_routes (id, app_type, model_pattern, provider_id, enabled)
+             VALUES ('r1', 'claude', 'gpt-4o', 'p1', 1)",
+            [],
+        )?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM model_routes", [], |row| row.get(0))?;
+        assert_eq!(count, 1);
 
         Ok(())
     }

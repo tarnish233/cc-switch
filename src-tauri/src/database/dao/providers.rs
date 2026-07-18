@@ -284,6 +284,15 @@ impl Database {
             params![id, app_type],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 级联清理该供应商的模型聚合路由，避免留下指向已删除供应商的悬空路由
+        // （悬空路由会在运行时静默回退到当前供应商，属于隐蔽的错误路由）。
+        conn.execute(
+            "DELETE FROM model_routes WHERE provider_id = ?1 AND app_type = ?2",
+            params![id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 

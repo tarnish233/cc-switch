@@ -145,6 +145,11 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 模型聚合路由命中时配置的上游模型改写（转发前覆盖请求模型名）。
+    routed_upstream_model: Option<String>,
+    /// 本次请求是否由模型聚合路由命中。为 true 时抑制成功后的"当前供应商"持久切换：
+    /// 聚合按模型路由，不应把某次请求的目标固化为该应用的当前供应商。
+    aggregation_routed: bool,
 }
 
 impl RequestForwarder {
@@ -235,7 +240,23 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            routed_upstream_model: None,
+            aggregation_routed: false,
         }
+    }
+
+    /// 设置模型聚合路由命中时的上游模型改写（builder 风格，避免膨胀 `new` 的参数列表）。
+    pub fn with_routed_upstream_model(mut self, model: Option<String>) -> Self {
+        self.routed_upstream_model = model
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        self
+    }
+
+    /// 标记本次请求是否由模型聚合路由命中（builder 风格）。
+    pub fn with_aggregation_routed(mut self, routed: bool) -> Self {
+        self.aggregation_routed = routed;
+        self
     }
 
     async fn record_success_result(
@@ -509,8 +530,10 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                        // 聚合路由命中时不做持久切换：聚合按模型路由，不应把某次请求
+                        // 的目标固化为该应用的"当前供应商"（否则会随每个模型来回抖动）。
+                        let should_switch = !self.aggregation_routed
+                            && self.current_provider_id_at_start.as_str() != provider.id.as_str();
                         if should_switch {
                             status.failover_count += 1;
 
@@ -1152,6 +1175,25 @@ impl RequestForwarder {
         if codex_official_auth_passthrough {
             validate_codex_official_authorization(headers)?;
         }
+
+        // 模型聚合：命中路由且配置了 upstream_model 时，先把请求模型名改写为上游模型名，
+        // 再走后续的 per-provider 模型映射与格式转换。`body` 是 &Value，这里克隆出一份
+        // 应用改写后的 owned 值供后续使用（后续映射本就基于 clone 展开）。
+        let effective_body;
+        let body: &Value = if let Some(ref upstream_model) = self.routed_upstream_model {
+            let mut owned = body.clone();
+            if let Some(obj) = owned.as_object_mut() {
+                log::debug!(
+                    "[AGG] 覆盖上游模型名: {} → {upstream_model}",
+                    obj.get("model").and_then(Value::as_str).unwrap_or("?")
+                );
+                obj.insert("model".to_string(), Value::String(upstream_model.clone()));
+            }
+            effective_body = owned;
+            &effective_body
+        } else {
+            body
+        };
 
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
@@ -3512,6 +3554,8 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            routed_upstream_model: None,
+            aggregation_routed: false,
         }
     }
 

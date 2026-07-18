@@ -418,6 +418,10 @@
           "debug": "详细信息，包含 SSE 流和请求/响应详情",
           "trace": "全部日志，最详细"
         }
+      },
+      "aggregation": {
+        "title": "模型聚合",
+        "description": "把不同供应商的模型聚合到统一代理端点，按模型名路由"
       }
     },
     "language": "界面语言",
@@ -2655,7 +2659,27 @@
       "startFailed": "启动路由服务失败: {{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "aggregation": {
+      "enableTitle": "模型聚合",
+      "enableDescription": "开启后，代理会按请求的模型名把请求路由到对应供应商，从而把不同供应商的模型聚合到一个端点。",
+      "info": "匹配规则：精确匹配（如 gpt-4o）优先，其次是最长前缀通配（如 gpt-*），最后是 * 兜底。未命中路由时回退到当前供应商。",
+      "modelPatternPlaceholder": "模型名 / 通配（如 gpt-*）",
+      "selectProvider": "选择供应商",
+      "noProviders": "该应用暂无供应商",
+      "upstreamModelPlaceholder": "上游模型名（可选）",
+      "empty": "暂无路由。添加「模型名 → 供应商」映射以启用聚合。",
+      "upstreamLabel": "上游模型",
+      "proxyRequired": "需要先启动代理服务才能配置模型聚合",
+      "enabled": "模型聚合已开启",
+      "disabled": "模型聚合已关闭",
+      "toggleFailed": "切换模型聚合失败",
+      "addSuccess": "已添加路由",
+      "addFailed": "添加路由失败",
+      "updateFailed": "更新路由失败",
+      "deleteSuccess": "已删除路由",
+      "deleteFailed": "删除路由失败"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 连通正常 ({{responseTimeMs}}ms)",

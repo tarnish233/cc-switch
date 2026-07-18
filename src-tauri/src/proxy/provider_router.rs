@@ -12,6 +12,27 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// 模型聚合路由的选择结果
+pub struct RoutedSelection {
+    /// 选中的供应商链
+    pub providers: Vec<Provider>,
+    /// 命中路由配置的上游模型改写（转发前覆盖请求模型名）
+    pub upstream_model: Option<String>,
+    /// 是否由聚合路由命中（false 表示回退到默认的当前/故障转移选择）
+    pub routed: bool,
+}
+
+impl RoutedSelection {
+    /// 构造"回退到默认选择"的结果（未命中聚合路由）
+    fn fallback(providers: Vec<Provider>) -> Self {
+        Self {
+            providers,
+            upstream_model: None,
+            routed: false,
+        }
+    }
+}
+
 /// 供应商路由器
 pub struct ProviderRouter {
     /// 数据库连接
@@ -108,7 +129,83 @@ impl ProviderRouter {
         Ok(result)
     }
 
-    /// 请求执行前获取熔断器“放行许可”
+    /// 按请求的模型名选择供应商（模型聚合路由）。
+    ///
+    /// 与 [`select_providers`](Self::select_providers) 的区别在于：先按请求模型名
+    /// 查询该应用的模型聚合路由表，命中则把请求路由到指定供应商，从而把不同供应商
+    /// 提供的模型聚合到同一个代理端点。
+    ///
+    /// 行为：
+    /// - 未开启聚合、或未命中路由、或目标供应商不存在/已熔断 → 回退
+    ///   [`select_providers`](Self::select_providers)（保持原有单供应商/故障转移行为，
+    ///   避免请求直接失败）。
+    /// - 命中路由 → 仅返回该供应商（聚合场景下跨供应商故障转移无意义，因为其他
+    ///   供应商未必提供该模型）。
+    ///
+    /// 返回 [`RoutedSelection`]，其中 `upstream_model` 为命中路由所配置的上游模型改写
+    /// （转发前用它覆盖请求模型名），`routed` 表示是否由聚合路由命中（用于抑制"当前
+    /// 供应商"的持久切换——聚合是按模型路由，不应把某次请求的目标固化为当前供应商）。
+    pub async fn select_providers_for_model(
+        &self,
+        app_type: &str,
+        model: &str,
+    ) -> Result<RoutedSelection, AppError> {
+        // 未开启聚合 → 默认逻辑
+        let aggregation_enabled = self.db.get_aggregation_enabled(app_type).unwrap_or(false);
+        if !aggregation_enabled {
+            return Ok(RoutedSelection::fallback(
+                self.select_providers(app_type).await?,
+            ));
+        }
+
+        // 归一化：去掉本地 [1m] 上下文标记后再匹配路由
+        let normalized = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model);
+        let route = self.db.find_model_route(app_type, normalized)?;
+
+        let Some(route) = route else {
+            log::debug!("[{app_type}] [AGG] 未命中模型路由: model={model}，回退默认供应商");
+            return Ok(RoutedSelection::fallback(
+                self.select_providers(app_type).await?,
+            ));
+        };
+
+        let Some(provider) = self.db.get_provider_by_id(&route.provider_id, app_type)? else {
+            log::warn!(
+                "[{app_type}] [AGG] 模型路由指向不存在的供应商 {}，回退默认供应商",
+                route.provider_id
+            );
+            return Ok(RoutedSelection::fallback(
+                self.select_providers(app_type).await?,
+            ));
+        };
+
+        // 熔断器不可用时回退默认逻辑
+        let circuit_key = format!("{app_type}:{}", provider.id);
+        let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+        if !breaker.is_available().await {
+            log::warn!(
+                "[{app_type}] [AGG] 命中供应商 {} 已熔断，回退默认供应商",
+                provider.name
+            );
+            return Ok(RoutedSelection::fallback(
+                self.select_providers(app_type).await?,
+            ));
+        }
+
+        log::debug!(
+            "[{app_type}] [AGG] 模型路由命中: model={model} → provider={} ({})",
+            provider.name,
+            provider.id
+        );
+
+        Ok(RoutedSelection {
+            providers: vec![provider],
+            upstream_model: route.upstream_model,
+            routed: true,
+        })
+    }
+
+    /// 请求执行前获取熔断器”放行许可”
     ///
     /// - Closed：直接放行
     /// - Open：超时到达后切到 HalfOpen 并放行一次探测
@@ -519,5 +616,96 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_aggregation_disabled_falls_back_to_current() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        // 即便存在指向 b 的路由，聚合未开启时也应回退到当前供应商 a
+        db.upsert_model_route(&crate::database::ModelRoute {
+            id: "r1".to_string(),
+            app_type: "claude".to_string(),
+            model_pattern: "gpt-4o".to_string(),
+            provider_id: "b".to_string(),
+            provider_name: None,
+            upstream_model: None,
+            sort_index: Some(0),
+            enabled: true,
+            created_at: Some(0),
+        })
+        .unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let selection = router
+            .select_providers_for_model("claude", "gpt-4o")
+            .await
+            .unwrap();
+
+        assert_eq!(selection.providers.len(), 1);
+        assert_eq!(selection.providers[0].id, "a");
+        assert!(selection.upstream_model.is_none());
+        assert!(!selection.routed);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_aggregation_routes_to_matching_provider() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        db.set_aggregation_enabled("claude", true).unwrap();
+        db.upsert_model_route(&crate::database::ModelRoute {
+            id: "r1".to_string(),
+            app_type: "claude".to_string(),
+            model_pattern: "gpt-4o".to_string(),
+            provider_id: "b".to_string(),
+            provider_name: None,
+            upstream_model: Some("gpt-4o-2024".to_string()),
+            sort_index: Some(0),
+            enabled: true,
+            created_at: Some(0),
+        })
+        .unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 命中路由：路由到 b，并带上上游模型改写
+        let hit = router
+            .select_providers_for_model("claude", "gpt-4o")
+            .await
+            .unwrap();
+        assert_eq!(hit.providers.len(), 1);
+        assert_eq!(hit.providers[0].id, "b");
+        assert_eq!(hit.upstream_model.as_deref(), Some("gpt-4o-2024"));
+        assert!(hit.routed);
+
+        // 未命中路由：回退到当前供应商 a
+        let miss = router
+            .select_providers_for_model("claude", "claude-sonnet-4")
+            .await
+            .unwrap();
+        assert_eq!(miss.providers.len(), 1);
+        assert_eq!(miss.providers[0].id, "a");
+        assert!(miss.upstream_model.is_none());
+        assert!(!miss.routed);
     }
 }
